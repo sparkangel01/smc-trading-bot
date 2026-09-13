@@ -4,45 +4,62 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+def get_safe_list(quote, key):
+    """Safely get a list from the quote dict. Returns [] if anything is missing."""
+    if not quote or key not in quote or quote[key] is None:
+        return []
+    return quote[key]
+
 @app.route("/")
 def home():
     try:
-        # Yahoo Finance chart API (free, no key needed)
         url = "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=1d&range=5d"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
 
-        result = data["chart"]["result"][0]
-        quote = result["indicators"]["quote"][0]
+        # Safely dig through the response
+        if not data or "chart" not in data or data["chart"] is None:
+            return "<h1>Yahoo returned empty data. Try again in a minute.</h1>"
 
-        # Build clean lists of (high, low, close) tuples, skipping any None values
+        chart = data["chart"]
+        if not chart.get("result"):
+            return "<h1>No results from Yahoo. Try again in a minute.</h1>"
+
+        result = chart["result"][0]
+        if "indicators" not in result or "quote" not in result["indicators"]:
+            return "<h1>Yahoo response missing indicators.</h1>"
+
+        quote = result["indicators"]["quote"]
+        if not quote:
+            return "<h1>Yahoo response missing quote data.</h1>"
+
+        q = quote[0]
+        highs = get_safe_list(q, "high")
+        lows = get_safe_list(q, "low")
+        closes = get_safe_list(q, "close")
+
+        # Build clean candles, skipping any None values
         clean_candles = []
-        for h, l, c in zip(quote["high"], quote["low"], quote["close"]):
+        for h, l, c in zip(highs, lows, closes):
             if h is not None and l is not None and c is not None:
                 clean_candles.append((h, l, c))
 
         if len(clean_candles) < 2:
-            return "<h1>Not enough data yet. Try refreshing in a minute.</h1>"
+            return "<h1>Not enough clean candles yet. Try again in a minute.</h1>"
 
         prev_high = clean_candles[-2][0]
         prev_low = clean_candles[-2][1]
         last_close = clean_candles[-1][2]
 
         if last_close > prev_high:
-            signal = "BUY"
-            color = "#00e676"
-            glow = "rgba(0,230,118,0.4)"
+            signal, color, glow = "BUY", "#00e676", "rgba(0,230,118,0.4)"
             note = "Bullish Break of Structure"
         elif last_close < prev_low:
-            signal = "SELL"
-            color = "#ff5252"
-            glow = "rgba(255,82,82,0.4)"
+            signal, color, glow = "SELL", "#ff5252", "rgba(255,82,82,0.4)"
             note = "Bearish Break of Structure"
         else:
-            signal = "HOLD"
-            color = "#9e9e9e"
-            glow = "rgba(158,158,158,0.3)"
+            signal, color, glow = "HOLD", "#9e9e9e", "rgba(158,158,158,0.3)"
             note = "No clear break in structure"
 
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
@@ -88,103 +105,38 @@ def home():
                     text-transform: uppercase;
                 }}
                 .live {{
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 11px;
-                    color: #00e676;
-                    font-weight: 600;
+                    display: flex; align-items: center; gap: 6px;
+                    font-size: 11px; color: #00e676; font-weight: 600;
                 }}
                 .dot {{
-                    width: 8px; height: 8px;
-                    background: #00e676;
-                    border-radius: 50%;
-                    animation: pulse 1.5s infinite;
+                    width: 8px; height: 8px; background: #00e676;
+                    border-radius: 50%; animation: pulse 1.5s infinite;
                 }}
                 @keyframes pulse {{
                     0%, 100% {{ opacity: 1; }}
                     50% {{ opacity: 0.3; }}
                 }}
-                .asset {{
-                    font-size: 13px;
-                    color: #6b7280;
-                    margin-bottom: 4px;
-                }}
-                .asset-name {{
-                    font-size: 22px;
-                    font-weight: 700;
-                    color: #ffffff;
-                    margin-bottom: 28px;
-                }}
-                .price-block {{
-                    margin-bottom: 28px;
-                }}
-                .price-label {{
-                    font-size: 12px;
-                    color: #6b7280;
-                    letter-spacing: 1px;
-                    margin-bottom: 6px;
-                }}
-                .price {{
-                    font-size: 38px;
-                    font-weight: 800;
-                    color: #ffffff;
-                    letter-spacing: -1px;
-                }}
-                .levels {{
-                    display: flex;
-                    gap: 12px;
-                    margin-bottom: 28px;
-                }}
+                .asset {{ font-size: 13px; color: #6b7280; margin-bottom: 4px; }}
+                .asset-name {{ font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 28px; }}
+                .price-block {{ margin-bottom: 28px; }}
+                .price-label {{ font-size: 12px; color: #6b7280; letter-spacing: 1px; margin-bottom: 6px; }}
+                .price {{ font-size: 38px; font-weight: 800; color: #fff; letter-spacing: -1px; }}
+                .levels {{ display: flex; gap: 12px; margin-bottom: 28px; }}
                 .level {{
-                    flex: 1;
-                    background: #0a0e17;
-                    border: 1px solid #1f2633;
-                    border-radius: 12px;
-                    padding: 12px 14px;
+                    flex: 1; background: #0a0e17; border: 1px solid #1f2633;
+                    border-radius: 12px; padding: 12px 14px;
                 }}
-                .level-label {{
-                    font-size: 10px;
-                    color: #6b7280;
-                    letter-spacing: 1px;
-                    margin-bottom: 4px;
-                }}
-                .level-value {{
-                    font-size: 15px;
-                    font-weight: 600;
-                    color: #e0e0e0;
-                }}
+                .level-label {{ font-size: 10px; color: #6b7280; letter-spacing: 1px; margin-bottom: 4px; }}
+                .level-value {{ font-size: 15px; font-weight: 600; color: #e0e0e0; }}
                 .signal-block {{
-                    background: #0a0e17;
-                    border: 2px solid {color};
-                    border-radius: 16px;
-                    padding: 22px;
-                    text-align: center;
+                    background: #0a0e17; border: 2px solid {color};
+                    border-radius: 16px; padding: 22px; text-align: center;
                     box-shadow: 0 0 30px {glow};
                 }}
-                .signal-label {{
-                    font-size: 11px;
-                    color: #6b7280;
-                    letter-spacing: 2px;
-                    margin-bottom: 8px;
-                }}
-                .signal {{
-                    font-size: 42px;
-                    font-weight: 900;
-                    color: {color};
-                    letter-spacing: 2px;
-                }}
-                .signal-note {{
-                    font-size: 12px;
-                    color: #6b7280;
-                    margin-top: 8px;
-                }}
-                .footer {{
-                    margin-top: 24px;
-                    text-align: center;
-                    font-size: 10px;
-                    color: #4b5563;
-                }}
+                .signal-label {{ font-size: 11px; color: #6b7280; letter-spacing: 2px; margin-bottom: 8px; }}
+                .signal {{ font-size: 42px; font-weight: 900; color: {color}; letter-spacing: 2px; }}
+                .signal-note {{ font-size: 12px; color: #6b7280; margin-top: 8px; }}
+                .footer {{ margin-top: 24px; text-align: center; font-size: 10px; color: #4b5563; }}
             </style>
         </head>
         <body>
@@ -193,15 +145,12 @@ def home():
                     <div class="title">SMC Signal Bot</div>
                     <div class="live"><span class="dot"></span>LIVE</div>
                 </div>
-
                 <div class="asset">Asset</div>
                 <div class="asset-name">Gold · XAU/USD</div>
-
                 <div class="price-block">
                     <div class="price-label">CURRENT PRICE</div>
                     <div class="price">${last_close:,.2f}</div>
                 </div>
-
                 <div class="levels">
                     <div class="level">
                         <div class="level-label">PREV HIGH</div>
@@ -212,13 +161,11 @@ def home():
                         <div class="level-value">${prev_low:,.2f}</div>
                     </div>
                 </div>
-
                 <div class="signal-block">
                     <div class="signal-label">SIGNAL</div>
                     <div class="signal">{signal}</div>
                     <div class="signal-note">{note}</div>
                 </div>
-
                 <div class="footer">Updated {now}</div>
             </div>
         </body>
