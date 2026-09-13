@@ -1,56 +1,38 @@
 from flask import Flask
 import requests
+import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-def get_safe_list(quote, key):
-    """Safely get a list from the quote dict. Returns [] if anything is missing."""
-    if not quote or key not in quote or quote[key] is None:
-        return []
-    return quote[key]
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
 @app.route("/")
 def home():
     try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=1d&range=5d"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
+        url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1day&outputsize=5&apikey={TWELVEDATA_API_KEY}"
+        response = requests.get(url, timeout=10)
         data = response.json()
 
-        # Safely dig through the response
-        if not data or "chart" not in data or data["chart"] is None:
-            return "<h1>Yahoo returned empty data. Try again in a minute.</h1>"
+        if "values" not in data:
+            msg = data.get("message", "Unknown error from TwelveData")
+            return f"<body style='background:#0a0e17;color:#ff5252;font-family:sans-serif;padding:40px;'><h1>Data error</h1><p>{msg}</p></body>"
 
-        chart = data["chart"]
-        if not chart.get("result"):
-            return "<h1>No results from Yahoo. Try again in a minute.</h1>"
+        candles = list(reversed(data["values"]))
 
-        result = chart["result"][0]
-        if "indicators" not in result or "quote" not in result["indicators"]:
-            return "<h1>Yahoo response missing indicators.</h1>"
+        clean = []
+        for c in candles:
+            try:
+                clean.append((float(c["high"]), float(c["low"]), float(c["close"])))
+            except (KeyError, ValueError):
+                continue
 
-        quote = result["indicators"]["quote"]
-        if not quote:
-            return "<h1>Yahoo response missing quote data.</h1>"
+        if len(clean) < 2:
+            return "<body style='background:#0a0e17;color:#ff5252;font-family:sans-serif;padding:40px;'><h1>Not enough data</h1></body>"
 
-        q = quote[0]
-        highs = get_safe_list(q, "high")
-        lows = get_safe_list(q, "low")
-        closes = get_safe_list(q, "close")
-
-        # Build clean candles, skipping any None values
-        clean_candles = []
-        for h, l, c in zip(highs, lows, closes):
-            if h is not None and l is not None and c is not None:
-                clean_candles.append((h, l, c))
-
-        if len(clean_candles) < 2:
-            return "<h1>Not enough clean candles yet. Try again in a minute.</h1>"
-
-        prev_high = clean_candles[-2][0]
-        prev_low = clean_candles[-2][1]
-        last_close = clean_candles[-1][2]
+        prev_high = clean[-2][0]
+        prev_low = clean[-2][1]
+        last_close = clean[-1][2]
 
         if last_close > prev_high:
             signal, color, glow = "BUY", "#00e676", "rgba(0,230,118,0.4)"
@@ -74,65 +56,31 @@ def home():
                 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
                 body {{
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    background: #0a0e17;
-                    color: #e0e0e0;
-                    min-height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 20px;
+                    background: #0a0e17; color: #e0e0e0;
+                    min-height: 100vh; display: flex;
+                    align-items: center; justify-content: center; padding: 20px;
                 }}
                 .card {{
-                    background: #131824;
-                    border: 1px solid #1f2633;
-                    border-radius: 20px;
-                    padding: 32px 28px;
-                    max-width: 420px;
-                    width: 100%;
+                    background: #131824; border: 1px solid #1f2633;
+                    border-radius: 20px; padding: 32px 28px;
+                    max-width: 420px; width: 100%;
                     box-shadow: 0 20px 60px rgba(0,0,0,0.5);
                 }}
-                .header {{
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 24px;
-                }}
-                .title {{
-                    font-size: 14px;
-                    font-weight: 600;
-                    letter-spacing: 2px;
-                    color: #6b7280;
-                    text-transform: uppercase;
-                }}
-                .live {{
-                    display: flex; align-items: center; gap: 6px;
-                    font-size: 11px; color: #00e676; font-weight: 600;
-                }}
-                .dot {{
-                    width: 8px; height: 8px; background: #00e676;
-                    border-radius: 50%; animation: pulse 1.5s infinite;
-                }}
-                @keyframes pulse {{
-                    0%, 100% {{ opacity: 1; }}
-                    50% {{ opacity: 0.3; }}
-                }}
+                .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+                .title {{ font-size: 14px; font-weight: 600; letter-spacing: 2px; color: #6b7280; text-transform: uppercase; }}
+                .live {{ display: flex; align-items: center; gap: 6px; font-size: 11px; color: #00e676; font-weight: 600; }}
+                .dot {{ width: 8px; height: 8px; background: #00e676; border-radius: 50%; animation: pulse 1.5s infinite; }}
+                @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.3; }} }}
                 .asset {{ font-size: 13px; color: #6b7280; margin-bottom: 4px; }}
                 .asset-name {{ font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 28px; }}
                 .price-block {{ margin-bottom: 28px; }}
                 .price-label {{ font-size: 12px; color: #6b7280; letter-spacing: 1px; margin-bottom: 6px; }}
                 .price {{ font-size: 38px; font-weight: 800; color: #fff; letter-spacing: -1px; }}
                 .levels {{ display: flex; gap: 12px; margin-bottom: 28px; }}
-                .level {{
-                    flex: 1; background: #0a0e17; border: 1px solid #1f2633;
-                    border-radius: 12px; padding: 12px 14px;
-                }}
+                .level {{ flex: 1; background: #0a0e17; border: 1px solid #1f2633; border-radius: 12px; padding: 12px 14px; }}
                 .level-label {{ font-size: 10px; color: #6b7280; letter-spacing: 1px; margin-bottom: 4px; }}
                 .level-value {{ font-size: 15px; font-weight: 600; color: #e0e0e0; }}
-                .signal-block {{
-                    background: #0a0e17; border: 2px solid {color};
-                    border-radius: 16px; padding: 22px; text-align: center;
-                    box-shadow: 0 0 30px {glow};
-                }}
+                .signal-block {{ background: #0a0e17; border: 2px solid {color}; border-radius: 16px; padding: 22px; text-align: center; box-shadow: 0 0 30px {glow}; }}
                 .signal-label {{ font-size: 11px; color: #6b7280; letter-spacing: 2px; margin-bottom: 8px; }}
                 .signal {{ font-size: 42px; font-weight: 900; color: {color}; letter-spacing: 2px; }}
                 .signal-note {{ font-size: 12px; color: #6b7280; margin-top: 8px; }}
@@ -173,11 +121,7 @@ def home():
         """
 
     except Exception as e:
-        return f"""
-        <body style="background:#0a0e17;color:#ff5252;font-family:sans-serif;padding:40px;">
-        <h1>Error</h1><p>{str(e)}</p>
-        </body>
-        """
+        return f"<body style='background:#0a0e17;color:#ff5252;font-family:sans-serif;padding:40px;'><h1>Error</h1><p>{str(e)}</p></body>"
 
 if __name__ == "__main__":
     app.run()
