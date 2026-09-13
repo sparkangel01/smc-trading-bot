@@ -12,8 +12,6 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 PAIRS = [
     ("XAU/USD", "Gold"),
     ("EUR/USD", "Euro"),
-    ("GBP/USD", "Pound"),
-    ("USD/JPY", "Yen"),
     ("BTC/USD", "Bitcoin"),
 ]
 
@@ -32,6 +30,41 @@ def killzone_name():
     if 13 <= hour < 16:
         return "New York"
     return "Closed"
+
+def get_htf_bias(symbol):
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=4h&outputsize=20&apikey={TWELVEDATA_API_KEY}"
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if "values" not in data:
+            return None
+
+        candles = list(reversed(data["values"]))
+        highs, lows, closes = [], [], []
+        for c in candles:
+            try:
+                highs.append(float(c["high"]))
+                lows.append(float(c["low"]))
+                closes.append(float(c["close"]))
+            except (KeyError, ValueError):
+                continue
+
+        if len(closes) < 5:
+            return None
+
+        recent_high = max(highs[-5:])
+        earlier_high = max(highs[-10:-5]) if len(highs) >= 10 else max(highs[:-5])
+        recent_low = min(lows[-5:])
+        earlier_low = min(lows[-10:-5]) if len(lows) >= 10 else min(lows[:-5])
+
+        if recent_high > earlier_high and recent_low > earlier_low:
+            return "BULLISH"
+        elif recent_high < earlier_high and recent_low < earlier_low:
+            return "BEARISH"
+        else:
+            return "RANGING"
+    except Exception:
+        return None
 
 def calc_trade(signal, entry, prev_high, prev_low):
     if signal == "BUY":
@@ -68,6 +101,8 @@ def fetch_one(symbol):
         prev_low = clean[-2][1]
         last_close = clean[-1][2]
 
+        htf = get_htf_bias(symbol)
+
         if last_close > prev_high:
             raw_signal, color = "BUY", "#00e676"
             note = "Bullish BOS"
@@ -78,7 +113,15 @@ def fetch_one(symbol):
             raw_signal, color = "HOLD", "#9e9e9e"
             note = "No break"
 
-        if raw_signal in ("BUY", "SELL") and not in_killzone():
+        if raw_signal == "BUY" and htf == "BEARISH":
+            signal = "HOLD"
+            color = "#9e9e9e"
+            note = "BUY blocked (4H bearish)"
+        elif raw_signal == "SELL" and htf == "BULLISH":
+            signal = "HOLD"
+            color = "#9e9e9e"
+            note = "SELL blocked (4H bullish)"
+        elif raw_signal in ("BUY", "SELL") and not in_killzone():
             signal = "HOLD"
             color = "#9e9e9e"
             note = "Signal ignored (outside killzone)"
@@ -95,6 +138,7 @@ def fetch_one(symbol):
             "signal": signal,
             "color": color,
             "note": note,
+            "htf": htf or "UNKNOWN",
             "trade": trade,
         }
     except Exception as e:
@@ -105,7 +149,7 @@ def fetch_all():
     if _cache["data"] is not None and (now - _cache["last_fetch"]) < 300:
         return _cache["data"]
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(lambda p: fetch_one(p[0]), PAIRS))
 
     for r, (symbol, name) in zip(results, PAIRS):
@@ -186,7 +230,14 @@ PAGE = """
             align-items: flex-start; margin-bottom: 14px;
         }
         .pair { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 2px; }
-        .name { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
+        .name { font-size: 11px; color: #6b7280; margin-bottom: 4px; }
+        .htf {
+            font-size: 10px; font-weight: 600;
+            letter-spacing: 1px; margin-bottom: 8px;
+        }
+        .htf-bull { color: #00e676; }
+        .htf-bear { color: #ff5252; }
+        .htf-range { color: #6b7280; }
         .price { font-size: 20px; font-weight: 700; color: #e0e0e0; letter-spacing: -0.5px; }
         .signal-badge {
             display: inline-block;
@@ -227,7 +278,7 @@ PAGE = """
             <div class="title">SMC Signal Bot · 1H</div>
             <div class="live"><span class="dot"></span>LIVE</div>
         </div>
-        <div class="kz-bar" id="kz-bar">
+        <div class="kz-bar">
             <span>Killzone:</span>
             <span id="kz-status" class="kz-closed">Loading...</span>
         </div>
@@ -259,6 +310,11 @@ PAGE = """
                     html += '<div class="row1"><div>';
                     html += '<div class="pair">' + r.symbol + '</div>';
                     html += '<div class="name">' + r.name + '</div>';
+
+                    let htfClass = 'htf-range';
+                    if (r.htf === 'BULLISH') htfClass = 'htf-bull';
+                    if (r.htf === 'BEARISH') htfClass = 'htf-bear';
+                    html += '<div class="htf ' + htfClass + '">4H: ' + (r.htf || '—') + '</div>';
 
                     if (r.error) {
                         html += '<div class="err">' + r.error + '</div>';
