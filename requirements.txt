@@ -1,3 +1,2 @@
-metaapi-cloud-sdk
 flask
 gunicorn
