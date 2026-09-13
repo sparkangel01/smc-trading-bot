@@ -7,65 +7,82 @@ app = Flask(__name__)
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
-def fetch_signal():
-    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1min&outputsize=5&apikey={TWELVEDATA_API_KEY}"
-    response = requests.get(url, timeout=10)
-    data = response.json()
+# Add or remove pairs here — this is your watchlist
+PAIRS = [
+    ("XAU/USD", "Gold"),
+    ("EUR/USD", "Euro"),
+    ("GBP/USD", "Pound"),
+    ("USD/JPY", "Yen"),
+    ("BTC/USD", "Bitcoin"),
+]
 
-    if "values" not in data:
-        return {"error": data.get("message", "Unknown error from TwelveData")}
+def fetch_one(symbol):
+    """Fetch signal for a single pair. Returns a dict."""
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=5&apikey={TWELVEDATA_API_KEY}"
+        response = requests.get(url, timeout=10)
+        data = response.json()
 
-    candles = list(reversed(data["values"]))
-    clean = []
-    for c in candles:
-        try:
-            clean.append((float(c["high"]), float(c["low"]), float(c["close"])))
-        except (KeyError, ValueError):
-            continue
+        if "values" not in data:
+            return {"symbol": symbol, "error": data.get("message", "no data")}
 
-    if len(clean) < 2:
-        return {"error": "Not enough data"}
+        candles = list(reversed(data["values"]))
+        clean = []
+        for c in candles:
+            try:
+                clean.append((float(c["high"]), float(c["low"]), float(c["close"])))
+            except (KeyError, ValueError):
+                continue
 
-    prev_high = clean[-2][0]
-    prev_low = clean[-2][1]
-    last_close = clean[-1][2]
+        if len(clean) < 2:
+            return {"symbol": symbol, "error": "not enough data"}
 
-    if last_close > prev_high:
-        signal, color = "BUY", "#00e676"
-        note = "Bullish Break of Structure"
-    elif last_close < prev_low:
-        signal, color = "SELL", "#ff5252"
-        note = "Bearish Break of Structure"
-    else:
-        signal, color = "HOLD", "#9e9e9e"
-        note = "No clear break in structure"
+        prev_high = clean[-2][0]
+        prev_low = clean[-2][1]
+        last_close = clean[-1][2]
 
+        if last_close > prev_high:
+            signal, color = "BUY", "#00e676"
+            note = "Bullish BOS"
+        elif last_close < prev_low:
+            signal, color = "SELL", "#ff5252"
+            note = "Bearish BOS"
+        else:
+            signal, color = "HOLD", "#9e9e9e"
+            note = "No break"
+
+        return {
+            "symbol": symbol,
+            "price": last_close,
+            "prev_high": prev_high,
+            "prev_low": prev_low,
+            "signal": signal,
+            "color": color,
+            "note": note,
+        }
+    except Exception as e:
+        return {"symbol": symbol, "error": str(e)}
+
+def fetch_all():
+    """Fetch signals for every pair in the watchlist."""
+    results = []
+    for symbol, name in PAIRS:
+        r = fetch_one(symbol)
+        r["name"] = name
+        results.append(r)
     return {
-        "price": last_close,
-        "prev_high": prev_high,
-        "prev_low": prev_low,
-        "signal": signal,
-        "color": color,
-        "note": note,
+        "results": results,
         "updated": datetime.utcnow().strftime("%H:%M:%S UTC"),
     }
 
 @app.route("/data")
 def data_route():
-    return jsonify(fetch_signal())
+    return jsonify(fetch_all())
 
 @app.route("/")
 def home():
-    initial = fetch_signal()
-    return render_template_string(PAGE,
-        price=f"{initial.get('price', 0):,.2f}",
-        prev_high=f"{initial.get('prev_high', 0):,.2f}",
-        prev_low=f"{initial.get('prev_low', 0):,.2f}",
-        signal=initial.get('signal', '—'),
-        color=initial.get('color', '#9e9e9e'),
-        note=initial.get('note', ''),
-        updated=initial.get('updated', '')
-    )
+    initial = fetch_all()
+    return render_template_string(PAGE, initial=initial)
 
 PAGE = """
 <!DOCTYPE html>
@@ -78,109 +95,133 @@ PAGE = """
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: #0a0e17; color: #e0e0e0;
-            min-height: 100vh; display: flex;
-            align-items: center; justify-content: center; padding: 20px;
+            min-height: 100vh; padding: 20px;
+            display: flex; justify-content: center;
         }
+        .wrap { width: 100%; max-width: 480px; }
+        .header {
+            display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 20px;
+            padding: 0 4px;
+        }
+        .title {
+            font-size: 14px; font-weight: 600; letter-spacing: 2px;
+            color: #6b7280; text-transform: uppercase;
+        }
+        .live {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 11px; color: #00e676; font-weight: 600;
+        }
+        .dot {
+            width: 8px; height: 8px; background: #00e676;
+            border-radius: 50%; animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         .card {
             background: #131824; border: 1px solid #1f2633;
-            border-radius: 20px; padding: 32px 28px;
-            max-width: 420px; width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            border-radius: 16px; padding: 18px 20px;
+            margin-bottom: 12px;
+            display: flex; align-items: center; justify-content: space-between;
+            transition: transform 0.2s;
         }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .title { font-size: 14px; font-weight: 600; letter-spacing: 2px; color: #6b7280; text-transform: uppercase; }
-        .live { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #00e676; font-weight: 600; }
-        .dot { width: 8px; height: 8px; background: #00e676; border-radius: 50%; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-        .asset { font-size: 13px; color: #6b7280; margin-bottom: 4px; }
-        .asset-name { font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 28px; }
-        .price-block { margin-bottom: 28px; }
-        .price-label { font-size: 12px; color: #6b7280; letter-spacing: 1px; margin-bottom: 6px; }
-        .price { font-size: 38px; font-weight: 800; color: #fff; letter-spacing: -1px; transition: color 0.3s; }
-        .levels { display: flex; gap: 12px; margin-bottom: 28px; }
-        .level { flex: 1; background: #0a0e17; border: 1px solid #1f2633; border-radius: 12px; padding: 12px 14px; }
-        .level-label { font-size: 10px; color: #6b7280; letter-spacing: 1px; margin-bottom: 4px; }
-        .level-value { font-size: 15px; font-weight: 600; color: #e0e0e0; }
-        .signal-block {
-            background: #0a0e17; border: 2px solid {{ color }};
-            border-radius: 16px; padding: 22px; text-align: center;
-            transition: border-color 0.4s, box-shadow 0.4s;
-            box-shadow: 0 0 30px {{ color }}66;
+        .left { flex: 1; min-width: 0; }
+        .pair {
+            font-size: 16px; font-weight: 700; color: #fff;
+            margin-bottom: 2px;
         }
-        .signal-label { font-size: 11px; color: #6b7280; letter-spacing: 2px; margin-bottom: 8px; }
-        .signal { font-size: 42px; font-weight: 900; letter-spacing: 2px; transition: color 0.4s; color: {{ color }}; }
-        .signal-note { font-size: 12px; color: #6b7280; margin-top: 8px; }
-        .footer { margin-top: 24px; text-align: center; font-size: 10px; color: #4b5563; }
+        .name {
+            font-size: 11px; color: #6b7280; margin-bottom: 8px;
+        }
+        .price {
+            font-size: 18px; font-weight: 700; color: #e0e0e0;
+            letter-spacing: -0.5px;
+        }
+        .right { text-align: right; }
+        .signal-badge {
+            display: inline-block;
+            font-size: 13px; font-weight: 800; letter-spacing: 1px;
+            padding: 6px 12px; border-radius: 8px;
+            border: 1.5px solid;
+            margin-bottom: 6px;
+        }
+        .note { font-size: 10px; color: #6b7280; }
+        .err { color: #ff5252; font-size: 12px; }
+        .footer {
+            text-align: center; font-size: 10px; color: #4b5563;
+            margin-top: 20px; padding: 0 4px;
+        }
         .flash { animation: flash 0.6s; }
         @keyframes flash { 0% { background: rgba(0,230,118,0.15); } 100% { background: transparent; } }
     </style>
 </head>
 <body>
-    <div class="card">
+    <div class="wrap">
         <div class="header">
             <div class="title">SMC Signal Bot</div>
             <div class="live"><span class="dot"></span>LIVE</div>
         </div>
-        <div class="asset">Asset</div>
-        <div class="asset-name">Gold · XAU/USD</div>
-        <div class="price-block">
-            <div class="price-label">CURRENT PRICE</div>
-            <div class="price" id="price">${{ price }}</div>
-        </div>
-        <div class="levels">
-            <div class="level">
-                <div class="level-label">PREV HIGH</div>
-                <div class="level-value" id="prev_high">${{ prev_high }}</div>
+        <div id="cards">
+            {% for r in initial.results %}
+            <div class="card">
+                <div class="left">
+                    <div class="pair">{{ r.symbol }}</div>
+                    <div class="name">{{ r.name }}</div>
+                    {% if r.error %}
+                        <div class="err">{{ r.error }}</div>
+                    {% else %}
+                        <div class="price">${{ '%.2f'|format(r.price) }}</div>
+                    {% endif %}
+                </div>
+                {% if not r.error %}
+                <div class="right">
+                    <div class="signal-badge" style="color: {{ r.color }}; border-color: {{ r.color }};">
+                        {{ r.signal }}
+                    </div>
+                    <div class="note">{{ r.note }}</div>
+                </div>
+                {% endif %}
             </div>
-            <div class="level">
-                <div class="level-label">PREV LOW</div>
-                <div class="level-value" id="prev_low">${{ prev_low }}</div>
-            </div>
+            {% endfor %}
         </div>
-        <div class="signal-block" id="signal_block">
-            <div class="signal-label">SIGNAL</div>
-            <div class="signal" id="signal">{{ signal }}</div>
-            <div class="signal-note" id="note">{{ note }}</div>
-        </div>
-        <div class="footer">Updated <span id="updated">{{ updated }}</span></div>
+        <div class="footer">Updated <span id="updated">{{ initial.updated }}</span></div>
     </div>
 
     <script>
-        let lastPrice = null;
-
         async function refresh() {
             try {
                 const res = await fetch('/data');
                 const d = await res.json();
-                if (d.error) return;
+                const container = document.getElementById('cards');
+                let html = '';
 
-                document.getElementById('price').textContent = '$' + d.price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                document.getElementById('prev_high').textContent = '$' + d.prev_high.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                document.getElementById('prev_low').textContent = '$' + d.prev_low.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-
-                const sig = document.getElementById('signal');
-                const block = document.getElementById('signal_block');
-                sig.textContent = d.signal;
-                sig.style.color = d.color;
-                block.style.borderColor = d.color;
-                block.style.boxShadow = '0 0 30px ' + d.color + '66';
-
-                document.getElementById('note').textContent = d.note;
-                document.getElementById('updated').textContent = d.updated;
-
-                if (lastPrice !== null && lastPrice !== d.price) {
-                    const p = document.getElementById('price');
-                    p.classList.remove('flash');
-                    void p.offsetWidth;
-                    p.classList.add('flash');
+                for (const r of d.results) {
+                    html += '<div class="card">';
+                    html += '<div class="left">';
+                    html += '<div class="pair">' + r.symbol + '</div>';
+                    html += '<div class="name">' + r.name + '</div>';
+                    if (r.error) {
+                        html += '<div class="err">' + r.error + '</div>';
+                    } else {
+                        html += '<div class="price">$' + r.price.toFixed(2) + '</div>';
+                    }
+                    html += '</div>';
+                    if (!r.error) {
+                        html += '<div class="right">';
+                        html += '<div class="signal-badge" style="color:' + r.color + ';border-color:' + r.color + ';">' + r.signal + '</div>';
+                        html += '<div class="note">' + r.note + '</div>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
                 }
-                lastPrice = d.price;
+
+                container.innerHTML = html;
+                document.getElementById('updated').textContent = d.updated;
             } catch (e) {
                 console.log('Refresh failed:', e);
             }
         }
 
-        setInterval(refresh, 15000);
+        setInterval(refresh, 30000);
     </script>
 </body>
 </html>
