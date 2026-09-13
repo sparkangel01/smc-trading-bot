@@ -6,23 +6,29 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     try:
-        # Fetch XAUUSD daily candles from TradingView (free, no key)
-        # Symbol format on TradingView for Gold is OANDA:XAUUSD
-        url = "https://scanner.tradingview.com/forex/scan"
-        payload = {
-            "symbols": {"tickers": ["OANDA:XAUUSD"], "query": {"types": []}},
-            "columns": ["close", "high", "low", "open", "change"]
-        }
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        # Yahoo Finance chart API (free, no key needed)
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?interval=1d&range=5d"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
 
-        # Extract the data
-        d = data["data"][0]["d"]
-        last_close = d[0]  # close
-        prev_high = d[1]  # high
-        prev_low = d[2]   # low
-        last_open = d[3]  # open
+        # Get the list of highs, lows, and closes
+        result = data["chart"]["result"][0]
+        highs = result["indicators"]["quote"][0]["high"]
+        lows = result["indicators"]["quote"][0]["low"]
+        closes = result["indicators"]["quote"][0]["close"]
+
+        # Clean out any None values (Yahoo sometimes returns these)
+        highs = [h for h in highs if h is not None]
+        lows = [l for l in lows if l is not None]
+        closes = [c for c in closes if c is not None]
+
+        if len(closes) < 2:
+            return "<h1>Not enough data yet</h1>"
+
+        prev_high = highs[-2]
+        prev_low = lows[-2]
+        last_close = closes[-1]
 
         # SMC Break of Structure logic
         if last_close > prev_high:
