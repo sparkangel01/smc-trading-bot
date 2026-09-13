@@ -3,6 +3,7 @@ import requests
 import os
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
@@ -16,11 +17,7 @@ PAIRS = [
     ("BTC/USD", "Bitcoin"),
 ]
 
-# --- Cache: fetch only once per 60 seconds ---
-_cache = {
-    "data": None,
-    "last_fetch": 0,
-}
+_cache = {"data": None, "last_fetch": 0}
 
 def calc_trade(signal, entry, prev_high, prev_low):
     if signal == "BUY":
@@ -36,7 +33,7 @@ def calc_trade(signal, entry, prev_high, prev_low):
 def fetch_one(symbol):
     try:
         url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1min&outputsize=5&apikey={TWELVEDATA_API_KEY}"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         data = response.json()
 
         if "values" not in data:
@@ -83,17 +80,17 @@ def fetch_one(symbol):
         return {"symbol": symbol, "error": str(e)}
 
 def fetch_all():
-    """Only hits the API if cache is older than 60 seconds."""
     now = time.time()
     if _cache["data"] is not None and (now - _cache["last_fetch"]) < 60:
         return _cache["data"]
 
-    results = []
-    for symbol, name in PAIRS:
-        r = fetch_one(symbol)
+    # Fire all 5 requests at the same time
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(lambda p: fetch_one(p[0]), PAIRS))
+
+    # Attach names
+    for r, (symbol, name) in zip(results, PAIRS):
         r["name"] = name
-        results.append(r)
-        time.sleep(8)  # wait 8 seconds between requests to stay under limit
 
     fresh = {
         "results": results,
@@ -111,6 +108,11 @@ def data_route():
 def home():
     initial = fetch_all()
     return render_template_string(PAGE, initial=initial)
+
+# Add a simple health route for Render
+@app.route("/health")
+def health():
+    return "ok"
 
 PAGE = """
 <!DOCTYPE html>
