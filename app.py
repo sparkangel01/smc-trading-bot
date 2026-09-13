@@ -8,8 +8,7 @@ app = Flask(__name__)
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
 def fetch_signal():
-    """Fetch data and return a dict with everything the page needs."""
-    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1day&outputsize=5&apikey={TWELVEDATA_API_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1min&outputsize=5&apikey={TWELVEDATA_API_KEY}"
     response = requests.get(url, timeout=10)
     data = response.json()
 
@@ -53,13 +52,20 @@ def fetch_signal():
 
 @app.route("/data")
 def data_route():
-    """JSON endpoint the page fetches every 10 seconds."""
     return jsonify(fetch_signal())
 
 @app.route("/")
 def home():
     initial = fetch_signal()
-    return render_template_string(PAGE, initial=initial)
+    return render_template_string(PAGE,
+        price=f"{initial.get('price', 0):,.2f}",
+        prev_high=f"{initial.get('prev_high', 0):,.2f}",
+        prev_low=f"{initial.get('prev_low', 0):,.2f}",
+        signal=initial.get('signal', '—'),
+        color=initial.get('color', '#9e9e9e'),
+        note=initial.get('note', ''),
+        updated=initial.get('updated', '')
+    )
 
 PAGE = """
 <!DOCTYPE html>
@@ -96,12 +102,13 @@ PAGE = """
         .level-label { font-size: 10px; color: #6b7280; letter-spacing: 1px; margin-bottom: 4px; }
         .level-value { font-size: 15px; font-weight: 600; color: #e0e0e0; }
         .signal-block {
-            background: #0a0e17; border: 2px solid #9e9e9e;
+            background: #0a0e17; border: 2px solid {{ color }};
             border-radius: 16px; padding: 22px; text-align: center;
             transition: border-color 0.4s, box-shadow 0.4s;
+            box-shadow: 0 0 30px {{ color }}66;
         }
         .signal-label { font-size: 11px; color: #6b7280; letter-spacing: 2px; margin-bottom: 8px; }
-        .signal { font-size: 42px; font-weight: 900; letter-spacing: 2px; transition: color 0.4s; }
+        .signal { font-size: 42px; font-weight: 900; letter-spacing: 2px; transition: color 0.4s; color: {{ color }}; }
         .signal-note { font-size: 12px; color: #6b7280; margin-top: 8px; }
         .footer { margin-top: 24px; text-align: center; font-size: 10px; color: #4b5563; }
         .flash { animation: flash 0.6s; }
@@ -118,24 +125,24 @@ PAGE = """
         <div class="asset-name">Gold · XAU/USD</div>
         <div class="price-block">
             <div class="price-label">CURRENT PRICE</div>
-            <div class="price" id="price">${initial.price:,.2f}</div>
+            <div class="price" id="price">${{ price }}</div>
         </div>
         <div class="levels">
             <div class="level">
                 <div class="level-label">PREV HIGH</div>
-                <div class="level-value" id="prev_high">${initial.prev_high:,.2f}</div>
+                <div class="level-value" id="prev_high">${{ prev_high }}</div>
             </div>
             <div class="level">
                 <div class="level-label">PREV LOW</div>
-                <div class="level-value" id="prev_low">${initial.prev_low:,.2f}</div>
+                <div class="level-value" id="prev_low">${{ prev_low }}</div>
             </div>
         </div>
-        <div class="signal-block" id="signal_block" style="border-color: {initial.color}; box-shadow: 0 0 30px {initial.color}66;">
+        <div class="signal-block" id="signal_block">
             <div class="signal-label">SIGNAL</div>
-            <div class="signal" id="signal" style="color: {initial.color};">{initial.signal}</div>
-            <div class="signal-note" id="note">{initial.note}</div>
+            <div class="signal" id="signal">{{ signal }}</div>
+            <div class="signal-note" id="note">{{ note }}</div>
         </div>
-        <div class="footer">Updated <span id="updated">{initial.updated}</span></div>
+        <div class="footer">Updated <span id="updated">{{ updated }}</span></div>
     </div>
 
     <script>
@@ -145,7 +152,6 @@ PAGE = """
             try {
                 const res = await fetch('/data');
                 const d = await res.json();
-
                 if (d.error) return;
 
                 document.getElementById('price').textContent = '$' + d.price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -174,7 +180,7 @@ PAGE = """
             }
         }
 
-        setInterval(refresh, 10000);
+        setInterval(refresh, 15000);
     </script>
 </body>
 </html>
