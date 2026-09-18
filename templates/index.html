@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMC Trader</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0b0f17; color: #e6edf7; font-family: -apple-system, sans-serif; }
+header { display: flex; gap: 8px; padding: 12px; background: #131826;
+  align-items: center; flex-wrap: wrap; }
+input, select, button { background: #1a2035; color: #e6edf7;
+  border: 1px solid #232b40; padding: 10px; border-radius: 6px; font-size: 14px; }
+input { width: 110px; }
+button { background: #4f8cff; border: none; font-weight: 600; cursor: pointer; }
+main { padding: 12px; }
+#chart { height: 45vh; background: #131826; border-radius: 10px; }
+.card { background: #131826; border-radius: 10px; padding: 16px; margin-top: 12px; }
+.action { font-size: 28px; font-weight: 800; text-align: center;
+  padding: 14px; border-radius: 10px; margin-bottom: 12px; }
+.buy  { background: rgba(22,199,132,0.15); color: #16c784; }
+.sell { background: rgba(234,57,67,0.15);  color: #ea3943; }
+.wait { background: rgba(138,148,168,0.15); color: #8a94a8; }
+.row { display: flex; justify-content: space-between; padding: 10px;
+  background: #1a2035; border-radius: 6px; margin: 4px 0; font-size: 14px; }
+.row .lbl { color: #8a94a8; }
+.reasons { list-style: none; font-size: 13px; color: #8a94a8; margin-top: 10px; }
+.hist-title { font-size: 12px; text-transform: uppercase; color: #8a94a8;
+  letter-spacing: 1px; margin-bottom: 10px; }
+.hist-item { padding: 10px; background: #1a2035; border-radius: 6px;
+  margin-bottom: 6px; font-size: 13px; border-left: 3px solid #232b40; }
+.hist-item.buy  { border-left-color: #16c784; }
+.hist-item.sell { border-left-color: #ea3943; }
+.hist-top { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.hist-dir { font-weight: 700; }
+.hist-out { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+.out-tp2    { background: rgba(22,199,132,0.2); color: #16c784; }
+.out-tp1    { background: rgba(22,199,132,0.15); color: #16c784; }
+.out-stopped{ background: rgba(234,57,67,0.2);  color: #ea3943; }
+.out-active { background: rgba(79,140,255,0.2); color: #4f8cff; }
+.hist-meta { color: #8a94a8; font-size: 12px; margin-top: 4px; }
+.winrate { display: flex; justify-content: space-between; padding: 12px;
+  background: #1a2035; border-radius: 8px; margin-bottom: 10px; font-size: 14px; }
+.winrate b { color: #16c784; }
+.quality { text-align: center; font-size: 13px; color: #8a94a8; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <input id="symbol" value="EURUSD" placeholder="EURUSD">
+  <select id="interval">
+    <option value="15m">15m</option>
+    <option value="1h">1H</option>
+    <option value="4h" selected>4H</option>
+    <option value="1d">1D</option>
+  </select>
+  <button id="analyze">Analyze</button>
+</header>
+<main>
+  <div id="chart"></div>
+  <div id="out"></div>
+</main>
+<script>
+let chart, series, lines = [];
+
+function initChart() {
+  chart = LightweightCharts.createChart(document.getElementById("chart"), {
+    layout: { background: { color: "#131826" }, textColor: "#e6edf7" },
+    grid: { vertLines: { color: "#1a2035" }, horzLines: { color: "#1a2035" } },
+    timeScale: { timeVisible: true, borderColor: "#232b40" },
+    rightPriceScale: { borderColor: "#232b40" },
+  });
+  series = chart.addCandlestickSeries({
+    upColor: "#16c784", downColor: "#ea3943",
+    wickUpColor: "#16c784", wickDownColor: "#ea3943",
+  });
+}
+
+function ts(s) {
+  const d = new Date(s.replace(" ", "T"));
+  return isNaN(d) ? Math.floor(Date.now() / 1000) : Math.floor(d.getTime() / 1000);
+}
+
+function fmt(v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  return n < 10 ? n.toFixed(5) : n.toFixed(2);
+}
+
+function draw(sig) {
+  lines.forEach(l => series.removePriceLine(l));
+  lines = [];
+  if (sig.entry == null) return;
+  lines.push(series.createPriceLine({ price: sig.entry, color: "#4f8cff",
+    lineWidth: 2, axisLabelVisible: true, title: "Entry" }));
+  lines.push(series.createPriceLine({ price: sig.sl, color: "#ea3943",
+    lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "SL" }));
+  lines.push(series.createPriceLine({ price: sig.tp1, color: "#16c784",
+    lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "TP1" }));
+  lines.push(series.createPriceLine({ price: sig.tp2, color: "#16c784",
+    lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "TP2" }));
+}
+
+function outcomeLabel(o) {
+  return { "TP2_HIT": "TP2 ✅✅", "TP1_HIT": "TP1 ✅",
+           "STOPPED": "SL ❌", "ACTIVE": "Active…" }[o] || o;
+}
+function outcomeClass(o) {
+  return { "TP2_HIT": "out-tp2", "TP1_HIT": "out-tp1",
+           "STOPPED": "out-stopped", "ACTIVE": "out-active" }[o] || "";
+}
+
+async function analyze() {
+  const symbol = document.getElementById("symbol").value.trim();
+  const interval = document.getElementById("interval").value;
+  document.getElementById("out").innerHTML = '<div class="card">Loading…</div>';
+  try {
+    const r = await fetch(`/api/analyze?symbol=${symbol}&interval=${interval}`);
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error);
+    series.setData(d.candles.map(c => ({
+      time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close,
+    })));
+    chart.timeScale().fitContent();
+
+    const s = d.signal;
+    draw(s);
+    const cls = s.action === "BUY" ? "buy" : s.action === "SELL" ? "sell" : "wait";
+    const hist = d.history || [];
+    const decided = hist.filter(h => h.outcome !== "ACTIVE");
+    const wins = decided.filter(h => h.outcome === "TP1_HIT" || h.outcome === "TP2_HIT").length;
+    const winRate = decided.length ? Math.round(wins / decided.length * 100) : 0;
+
+    document.getElementById("out").innerHTML = `
+      <div class="card">
+        <div class="action ${cls}">${s.action}</div>
+        ${s.entry != null ? `
+          <div class="row"><span class="lbl">Entry</span><b>${fmt(s.entry)}</b></div>
+          <div class="row"><span class="lbl">Stop Loss</span><b style="color:#ea3943">${fmt(s.sl)}</b></div>
+          <div class="row"><span class="lbl">TP1</span><b style="color:#16c784">${fmt(s.tp1)}</b></div>
+          <div class="row"><span class="lbl">TP2</span><b style="color:#16c784">${fmt(s.tp2)}</b></div>
+          <div class="quality">Quality score: <b>${s.quality || 0}/100</b></div>
+        ` : ""}
+        <ul class="reasons">${s.reason.map(x => `<li>${x}</li>`).join("")}</ul>
+      </div>
+      <div class="card">
+        <div class="hist-title">Recent Signals & Outcomes</div>
+        <div class="winrate">
+          <span>Win rate (last ${decided.length})</span>
+          <b>${winRate}% (${wins}W / ${decided.length - wins}L)</b>
+        </div>
+        ${hist.slice().reverse().map(h => `
+          <div class="hist-item ${h.direction.toLowerCase()}">
+            <div class="hist-top">
+              <span class="hist-dir">${h.direction}</span>
+              <span class="hist-out ${outcomeClass(h.outcome)}">${outcomeLabel(h.outcome)}</span>
+            </div>
+            <div class="hist-meta">${h.time} · Entry ${fmt(h.entry)}</div>
+          </div>
+        `).join("")}
+      </div>`;
+  } catch (e) {
+    document.getElementById("out").innerHTML =
+      `<div class="card" style="color:#ea3943">Error: ${e.message}</div>`;
+  }
+}
+
+initChart();
+document.getElementById("analyze").addEventListener("click", analyze);
+analyze();
+</script>
+</body>
+</html>
